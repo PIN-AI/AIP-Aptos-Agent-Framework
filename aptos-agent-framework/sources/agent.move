@@ -4,7 +4,7 @@ module aaf::agent {
     use std::signer;
     use std::string::String;
     use std::option::{Self, Option};
-    use aptos_framework::object::{Self, Object, ExtendRef};
+    use aptos_framework::object::{Self, Object};
     use aptos_framework::event;
     use aptos_std::table::{Self, Table};
     use aptos_framework::timestamp;
@@ -15,7 +15,7 @@ module aaf::agent {
     // ==================== Data Structures ====================
 
     /// Feedback authorization record
-    struct FeedbackAuth has store, drop {
+    struct FeedbackAuth has store {
         index_limit: u64,     // Maximum allowed feedback index (for rate limiting)
         expiry: u64,          // Authorization expiry timestamp
         last_index: u64,      // Last used feedback index
@@ -31,8 +31,6 @@ module aaf::agent {
         domain: Option<String>,
         /// Feedback authorization table: client_address => FeedbackAuth
         feedback_auths: Table<address, FeedbackAuth>,
-        /// ExtendRef for subsequent object-layer operations (e.g., ownership transfer)
-        extend_ref: ExtendRef,
     }
 
     // ==================== Events ====================
@@ -110,9 +108,6 @@ module aaf::agent {
         let creator_addr = signer::address_of(creator);
         let constructor_ref = object::create_object(creator_addr);
 
-        // Generate ExtendRef for subsequent operations
-        let extend_ref = object::generate_extend_ref(&constructor_ref);
-
         let object_signer = object::generate_signer(&constructor_ref);
         let agent_addr = signer::address_of(&object_signer);
 
@@ -125,12 +120,13 @@ module aaf::agent {
             owner: creator_addr,
             domain: domain,
             feedback_auths: table::new(),
-            extend_ref,
         });
 
-        // Note: We don't disable ungated transfer because TransferRef cannot be stored
-        // Users MUST use transfer_owner() to maintain consistency between object owner
-        // and Agent.owner field. Direct object transfer will cause data inconsistency.
+        // Disable ungated transfer to prevent data inconsistency
+        // Object transfer is disabled because all permission checks use Agent.owner field
+        // Users MUST use transfer_owner() which properly maintains ownership consistency
+        let transfer_ref = object::generate_transfer_ref(&constructor_ref);
+        object::disable_ungated_transfer(&transfer_ref);
 
         // Emit event - Fixed: use actual domain parameter
         event::emit(AgentRegistered {
@@ -223,7 +219,9 @@ module aaf::agent {
         assert!(agent_data.owner == signer::address_of(owner), E_NOT_OWNER);
         assert!(table::contains(&agent_data.feedback_auths, client), E_AUTH_NOT_FOUND);
 
-        table::remove(&mut agent_data.feedback_auths, client);
+        // Explicitly destructure the removed FeedbackAuth to avoid drop requirement
+        let FeedbackAuth { index_limit: _, expiry: _, last_index: _ } =
+            table::remove(&mut agent_data.feedback_auths, client);
 
         event::emit(FeedbackAuthRevoked {
             agent: agent_addr,
@@ -272,7 +270,8 @@ module aaf::agent {
     }
 
     /// Transfer agent ownership
-    /// Execute ownership transfer at both resource field and object layers
+    /// Updates ownership at the resource layer only
+    /// Note: Object-layer transfer is disabled via disable_ungated_transfer
     public entry fun transfer_owner(
         owner: &signer,
         agent: Object<Agent>,
@@ -284,9 +283,8 @@ module aaf::agent {
         assert!(old_owner == signer::address_of(owner), E_NOT_OWNER);
 
         // Update owner at resource field layer
-        // Note: We only maintain ownership at the resource layer (Agent.owner field)
-        // Object-layer ownership transfer is complex and not critical for our use case
         // All permission checks use Agent.owner field, not object ownership
+        // Object-layer transfer is disabled to prevent data inconsistency
         agent_data.owner = new_owner;
 
         event::emit(AgentOwnerChanged {
@@ -329,6 +327,20 @@ module aaf::agent {
     }
 
     // ==================== View Functions ====================
+
+    #[view]
+    /// Get agent owner address (convenience function)
+    ///
+    /// # Parameters
+    /// - agent: Agent object
+    ///
+    /// # Returns
+    /// Owner address
+    public fun get_owner(agent: Object<Agent>): address acquires Agent {
+        let agent_addr = object::object_address(&agent);
+        let agent_data = borrow_global<Agent>(agent_addr);
+        agent_data.owner
+    }
 
     #[view]
     /// Get agent basic information
