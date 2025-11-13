@@ -2,12 +2,12 @@
 aip: unconfirmed
 title: Aptos Agent Framework
 author: PIN-AI Team
-discussions-to: 
+discussions-to:
 Status: Draft
-last-call-end-date: 
+last-call-end-date:
 type: Standard (Framework, Application)
 created: 11/10/2025
-updated: 
+updated: 11/13/2025
 requires: aip-10, aip-11
 ---
 
@@ -126,10 +126,15 @@ module agent {
     use aptos_framework::object::{Self, Object};
     use aptos_framework::table::{Self, Table};
     use aptos_framework::timestamp;
+    use std::option;
+    use std::string::String;
+
+    // Declare friend module
+    friend aaf::agent_reputation;
 
     /// Authorization for a client to issue reputation feedback.
+    /// Note: client address is the Table key, not stored in the struct
     struct FeedbackAuth has store {
-        client: address,
         index_limit: u64,     // Maximum feedback index allowed (for rate limiting)
         expiry: u64,          // Timestamp when authorization expires
         last_index: u64,      // Last used feedback index
@@ -140,34 +145,71 @@ module agent {
         metadata_uri: String,
         owner: address,
         domain: option::Option<String>,
-        feedback_auths: Table<address, FeedbackAuth>,
+        feedback_auths: Table<address, FeedbackAuth>,  // client_address => FeedbackAuth
     }
 
     // ===== Events =====
+    #[event]
     struct AgentRegistered has drop, store {
-        agent: address, owner: address, metadata_uri: String, domain: option::Option<String>
+        agent: address,
+        owner: address,
+        metadata_uri_hash: vector<u8>,  // Hash for indexing
+        domain: option::Option<String>,
+        timestamp: u64,
     }
+
+    #[event]
     struct AgentUpdated has drop, store {
-        agent: address, metadata_uri: option::Option<String>, domain: option::Option<String>
+        agent: address,
+        metadata_uri_hash: option::Option<vector<u8>>,  // Hash if updated
+        domain: option::Option<String>,
+        timestamp: u64,
     }
+
+    #[event]
     struct AgentOwnerChanged has drop, store {
-        agent: address, old_owner: address, new_owner: address
+        agent: address,
+        old_owner: address,
+        new_owner: address,
+        timestamp: u64,
     }
+
+    #[event]
     struct FeedbackAuthGranted has drop, store {
-        agent: address, client: address, index_limit: u64, expiry: u64
+        agent: address,
+        client: address,
+        index_limit: u64,
+        expiry: u64,
+        timestamp: u64,
     }
+
+    #[event]
     struct FeedbackAuthRevoked has drop, store {
-        agent: address, client: address
+        agent: address,
+        client: address,
+        timestamp: u64,
     }
 
     // ===== Public Entry Functions =====
 
     /// Creates a new Agent object with metadata URI and optional domain.
+    /// Returns Object<Agent> via internal function, entry function discards return.
     public entry fun create_agent(
         creator: &signer,
         metadata_uri: String,
         domain: option::Option<String>
-    ): Object<Agent>;
+    );
+
+    public entry fun create_agent_simple(
+        creator: &signer,
+        metadata_uri: String
+    );
+
+    public entry fun create_agent_with_domain(
+        creator: &signer,
+        metadata_uri: String,
+        domain: String
+    );
 
     /// Agent owner grants feedback authorization to a client with rate limiting.
     public entry fun grant_feedback_auth(
@@ -210,10 +252,12 @@ module agent {
     ): u64 acquires Agent;
 
     // ===== Error Codes =====
-    const E_NOT_OWNER: u64 = 0x100;
-    const E_AUTH_NOT_FOUND: u64 = 0x101;
-    const E_AUTH_EXPIRED: u64 = 0x102;
-    const E_AUTH_QUOTA_EXCEEDED: u64 = 0x103;
+    const E_NOT_OWNER: u64 = 0x10001;
+    const E_AUTH_NOT_FOUND: u64 = 0x10002;
+    const E_AUTH_EXPIRED: u64 = 0x10003;
+    const E_AUTH_QUOTA_EXCEEDED: u64 = 0x10004;
+    const E_INVALID_METADATA_URI: u64 = 0x10005;
+    const E_INVALID_EXPIRY: u64 = 0x10006;
 }
 ```
 
@@ -221,21 +265,27 @@ module agent {
 
 This module implements reputation as composable Digital Assets with "Core Immutable, State Mutable" design.
 
-**Design Philosophy**: Reputation NFTs have immutable core data (score, issuer, context) to ensure integrity, while supporting mutable state (revocation, responses) for lifecycle management. All state changes emit events for transparency.
+**Design Philosophy**: Reputation NFTs have immutable core data (score, issuer, context) to ensure integrity, while supporting mutable state (revocation, response tracking) for lifecycle management. Response records are stored as independent objects to prevent Gas DoS attacks.
 
 ```move
 module agent_reputation {
-    use aptos_framework::object::{Self, Object, ConstructorRef};
+    use aptos_framework::object::{Self, Object};
     use aptos_framework::agent::Agent;
-    use std::vector;
+    use aptos_framework::timestamp;
+    use aptos_std::table::{Self, Table};
     use std::string::String;
 
-    /// Response appended to a reputation (e.g., refund proof, explanation).
-    struct ResponseRecord has store, drop {
+    /// Maximum number of responses per reputation (prevent DoS)
+    const MAX_RESPONSES: u64 = 100;
+
+    /// Response record (stored as independent object)
+    struct ResponseRecord has key {
+        reputation: address,       // Associated reputation NFT
         responder: address,
         response_uri: String,
         response_hash: vector<u8>,
         timestamp: u64,
+        index: u64,                // Response index (nth response)
     }
 
     /// Reputation NFT: Core data immutable, state data mutable.
@@ -252,32 +302,56 @@ module agent_reputation {
 
         // ===== MUTABLE STATE =====
         revoked: bool,
-        responses: vector<ResponseRecord>,
+        response_count: u64,        // Response counter (responses stored separately)
     }
 
-    /// Issuer capability for credentialed attestations (gated minting).
-    struct IssuerCapability has key { issuer: address }
+    /// Issuer capability store (using Table for efficient storage)
+    struct IssuerCapabilityStore has key {
+        issuers: Table<address, bool>,
+    }
+
+    /// Governance configuration (avoid hardcoded admin)
+    struct GovernanceConfig has key {
+        admin: address,
+    }
 
     // ===== Events =====
+    #[event]
     struct ReputationIssued has drop, store {
         reputation_obj: address,
         agent: address,
         issuer: address,
         score: u8,
-        context_hash: vector<u8>,
-        file_uri: String,
+        context_hash: vector<u8>,  // Hash for indexing
+        file_hash: vector<u8>,     // Hash for verification
         feedback_index: u64,
+        issued_at: u64,
     }
+
+    #[event]
     struct ReputationRevoked has drop, store {
         reputation_obj: address,
         agent: address,
         issuer: address,
+        timestamp: u64,
     }
+
+    #[event]
     struct ResponseAppended has drop, store {
         reputation_obj: address,
+        response_obj: address,     // Independent response object
         agent: address,
         responder: address,
-        response_uri: String,
+        response_hash: vector<u8>,  // Hash for verification
+        index: u64,
+        timestamp: u64,
+    }
+
+    #[event]
+    struct GovernanceTransferred has drop, store {
+        old_admin: address,
+        new_admin: address,
+        timestamp: u64,
     }
 
     // ===== Public Entry Functions =====
@@ -293,7 +367,7 @@ module agent_reputation {
         file_uri: String,
         file_hash: vector<u8>,
         gated: bool
-    ) acquires IssuerCapability;
+    ) acquires IssuerCapabilityStore;
 
     /// Issuer marks their previously issued reputation as revoked.
     public entry fun revoke_reputation(
@@ -302,7 +376,7 @@ module agent_reputation {
     ) acquires ReputationNFT;
 
     /// Appends a response record to a reputation NFT.
-    /// Anyone can append (agent, auditor, protocol).
+    /// Creates independent ResponseRecord object (max 100 per reputation).
     public entry fun append_response(
         responder: &signer,
         reputation: Object<ReputationNFT>,
@@ -311,24 +385,40 @@ module agent_reputation {
     ) acquires ReputationNFT;
 
     /// Grants issuer capability to an address (admin-controlled).
-    public entry fun grant_issuer_capability(admin: &signer, issuer: address);
+    public entry fun grant_issuer_capability(
+        admin: &signer,
+        issuer: address
+    ) acquires GovernanceConfig, IssuerCapabilityStore;
+
+    /// Transfers governance to a new admin.
+    public entry fun transfer_governance(
+        admin: &signer,
+        new_admin: address
+    ) acquires GovernanceConfig;
 
     // ===== View Functions =====
 
     /// Returns (agent, issuer, score, revoked, issued_at).
     #[view]
-    public fun get_reputation(reputation: Object<ReputationNFT>): (address, address, u8, bool, u64) acquires ReputationNFT;
+    public fun get_reputation(
+        reputation: Object<ReputationNFT>
+    ): (address, address, u8, bool, u64) acquires ReputationNFT;
 
     /// Returns the number of responses appended to this reputation.
     #[view]
-    public fun get_response_count(reputation: Object<ReputationNFT>): u64 acquires ReputationNFT;
+    public fun get_response_count(
+        reputation: Object<ReputationNFT>
+    ): u64 acquires ReputationNFT;
 
     // ===== Error Codes =====
-    const E_SCORE_OUT_OF_RANGE: u64 = 0x200;
-    const E_ISSUER_FORBIDDEN: u64 = 0x201;
-    const E_NOT_ISSUER: u64 = 0x202;
-    const E_ALREADY_REVOKED: u64 = 0x203;
-    const E_NOT_ADMIN: u64 = 0x204;
+    const E_SCORE_OUT_OF_RANGE: u64 = 0x20001;
+    const E_ISSUER_FORBIDDEN: u64 = 0x20002;
+    const E_NOT_ISSUER: u64 = 0x20003;
+    const E_ALREADY_REVOKED: u64 = 0x20004;
+    const E_NOT_ADMIN: u64 = 0x20005;
+    const E_INVALID_FILE_URI: u64 = 0x20006;
+    const E_MAX_RESPONSES_REACHED: u64 = 0x20007;
+    const E_REVOKED: u64 = 0x20008;
 }
 ```
 
@@ -344,7 +434,7 @@ module agent_validation {
     use std::vector;
 
     /// Pending request information.
-    struct RequestInfo has store {
+    struct RequestInfo has store, drop {
         agent: address,
         validator: address,
         data_hash: vector<u8>,
@@ -353,7 +443,7 @@ module agent_validation {
     }
 
     /// Completed validation record.
-    struct ValidationRecord has store {
+    struct ValidationRecord has store, drop {
         agent: address,
         validator: address,
         data_hash: vector<u8>,
@@ -370,20 +460,24 @@ module agent_validation {
     }
 
     // ===== Events =====
+    #[event]
     struct ValidationRequested has drop, store {
         request_id: vector<u8>,
         agent: address,
         validator: address,
-        data_hash: vector<u8>,
+        data_hash: vector<u8>,  // Hash for indexing
         created_at: u64,
         ttl_secs: u64,
     }
+
+    #[event]
     struct ValidationResponded has drop, store {
         request_id: vector<u8>,
         agent: address,
         validator: address,
         response: u8,
-        response_uri: String,
+        response_hash: vector<u8>,  // Hash for verification
+        responded_at: u64,
     }
 
     // ===== Module Initialization =====
@@ -394,10 +488,10 @@ module agent_validation {
     // ===== Public Entry Functions =====
 
     /// Requests validation for an agent's work.
-    /// Returns globally unique request_id = hash(agent || validator || data_hash || timestamp).
+    /// Computes globally unique request_id = hash(agent || validator || data_hash || timestamp).
     public entry fun request_validation(
         requester: &signer,
-        agent: Object<Agent>,
+        agent_addr: address,
         validator: address,
         data_hash: vector<u8>,
         ttl_secs: u64
@@ -436,12 +530,13 @@ module agent_validation {
     ): vector<u8>;
 
     // ===== Error Codes =====
-    const E_REQUEST_EXISTS: u64 = 0x300;
-    const E_RESPONSE_OUT_OF_RANGE: u64 = 0x301;
-    const E_REQUEST_NOT_FOUND: u64 = 0x302;
-    const E_NOT_VALIDATOR: u64 = 0x303;
-    const E_REQUEST_EXPIRED: u64 = 0x304;
-    const E_VALIDATION_NOT_FOUND: u64 = 0x305;
+    const E_REQUEST_EXISTS: u64 = 0x30001;
+    const E_RESPONSE_OUT_OF_RANGE: u64 = 0x30002;
+    const E_REQUEST_NOT_FOUND: u64 = 0x30003;
+    const E_NOT_VALIDATOR: u64 = 0x30004;
+    const E_REQUEST_EXPIRED: u64 = 0x30005;
+    const E_VALIDATION_NOT_FOUND: u64 = 0x30006;
+    const E_INVALID_TTL: u64 = 0x30007;
 }
 ```
 
@@ -515,7 +610,7 @@ The `metadata_uri` field in `Agent` MUST resolve to a JSON file following this s
   // Agent capabilities and skills (application-defined)
   "capabilities": {
     "tasks": ["trading", "data-analysis", "content-generation"],
-    "languages": ["en", "zh"],
+    "languages": ["en", "fr"],
     "max_concurrent_tasks": 10
   }
 }
@@ -586,18 +681,35 @@ Results are expected as part of a reference PoC repository accompanying this AIP
 
 ## Timeline
 
+### Current Status
+
+**Devnet Implementation Complete **
+
+AAF is now live on Aptos Devnet with full functionality:
+
+- **Contract Deployment**: [View on Explorer](https://explorer.aptoslabs.com/txn/0x717bcb2d19eee1ceefad3ce67e291b843ecfdb18fc18c40fccfc37678df3f8f0?network=devnet)
+- **GitHub Repository**: https://github.com/PIN-AI/AIP-Aptos-Agent-Framework
+
+**Live Demonstrations**:
+All core features have been tested on-chain with verifiable transactions:
+
+- [Agent Creation](https://explorer.aptoslabs.com/txn/0x1d167fd96d25b0ad71d3f87f88295dae8f0600ea2569c1d5e3974c96c4d384c1?network=devnet)
+- [Feedback Authorization](https://explorer.aptoslabs.com/txn/0x8c92f1a5591dd7c5b34b0c41b8dacfda62088583c1046e07c6d9281c1718bae4?network=devnet)
+- [Reputation Issuance](https://explorer.aptoslabs.com/txn/0xc56a13a44c8eea4173f439351a6c3d2e5b33c85d2f9289a40a3f0c4abcbe38d8?network=devnet)
+
 ### Suggested implementation timeline
-- **Initial Release**: Core AAF modules (identity, reputation, validation), unit/E2E tests, devnet demo; SDK helpers for event structs.
-- **Future Enhancements** : Optional on-chain registry, validation pools with staking, production-hardened DAA examples.
+- **Initial Release (COMPLETED)**: Core AAF modules (identity, reputation, validation), unit/E2E tests, devnet demo, SDK helpers for event structs.
+- **Community Review (CURRENT)**: Gathering feedback from the Aptos community, security review, and integration testing with real-world use cases.
+- **Future Enhancements**: Optional on-chain registry, validation pools with staking, production-hardened DAA examples.
 
 ### Suggested developer platform support timeline
-- **Initial Release**: SDK types for events and helper encoders/decoders; indexer event handlers and reputation aggregation examples.
-- **Future Enhancements**: Staking/slashing indexer parsers, registry query APIs.
+- **Initial SDK Support (COMPLETED)**: TypeScript SDK interaction tools with full feature coverage, CLI-friendly interfaces avoiding complex types.
+- **Future Enhancements**: SDK types for events and helper encoders/decoders; indexer event handlers and reputation aggregation examples; staking/slashing indexer parsers, registry query APIs.
 
 ### Suggested deployment timeline
-- **Devnet**: After initial implementation tests pass and community review.
-- **Testnet**: Following community feedback and stability testing.
-- **Mainnet**: After security audit and demonstrated adoption interest.
+- **Devnet**: Core modules deployed, all tests passed, live demonstrations available.
+- **Testnet**: Following community feedback, security review, and stability testing.
+- **Mainnet**: After security audit, demonstrated adoption interest, and testnet validation.
 
 ## Open Questions (Optional)
 
