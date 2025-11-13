@@ -163,6 +163,40 @@ module aaf::agent {
         create_agent_internal(creator, metadata_uri, domain);
     }
 
+    /// Convenience function: Create agent without domain (CLI-friendly)
+    ///
+    /// # Parameters
+    /// - creator: Creator signer
+    /// - metadata_uri: AgentCard metadata URI
+    ///
+    /// # Note
+    /// This function provides a CLI-friendly interface that avoids Option types.
+    /// Equivalent to `create_agent(creator, metadata_uri, option::none())`.
+    public entry fun create_agent_simple(
+        creator: &signer,
+        metadata_uri: String
+    ) {
+        create_agent_internal(creator, metadata_uri, option::none());
+    }
+
+    /// Convenience function: Create agent with domain (CLI-friendly)
+    ///
+    /// # Parameters
+    /// - creator: Creator signer
+    /// - metadata_uri: AgentCard metadata URI
+    /// - domain: Domain name
+    ///
+    /// # Note
+    /// This function provides a CLI-friendly interface that avoids Option types.
+    /// Equivalent to `create_agent(creator, metadata_uri, option::some(domain))`.
+    public entry fun create_agent_with_domain(
+        creator: &signer,
+        metadata_uri: String,
+        domain: String
+    ) {
+        create_agent_internal(creator, metadata_uri, option::some(domain));
+    }
+
     /// Agent owner grants feedback authorization to client
     ///
     /// # Parameters

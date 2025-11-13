@@ -1,0 +1,21 @@
+{
+  "name": "aaf-scripts",
+  "version": "1.0.0",
+  "description": "Aptos Agent Framework - DevNet Interaction Scripts",
+  "type": "module",
+  "scripts": {
+    "create-agent": "tsx ts/create_agent.ts",
+    "grant-auth": "tsx ts/grant_feedback_auth.ts",
+    "issue-reputation": "tsx ts/issue_reputation.ts",
+    "query-agent": "tsx ts/query_agent.ts"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^1.28.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+dist/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Build artifacts
+*.tgz
+
+# Environment files (contains sensitive keys!)
+.env
+.env.local
+.env.*.local
+
+# Keep example file
+!.env.example

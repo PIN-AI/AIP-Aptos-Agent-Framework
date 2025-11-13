@@ -185,3 +185,5 @@ id_dsa*
 id_ecdsa*
 id_ed25519*
 
+# ==================== Deployment ====================
+deployments/
