@@ -1,0 +1,18 @@
+[package]
+name = "AptosAgentFramework"
+version = "0.1.0"
+authors = ["PIN-AI Team"]
+license = "Apache-2.0"
+
+[addresses]
+aaf = "_"
+
+[dependencies.AptosFramework]
+local = "./framework/aptos-framework"
+
+[dependencies.AptosStdlib]
+local = "./framework/aptos-stdlib"
+
+[dev-addresses]
+aaf = "0xCAFE"
+

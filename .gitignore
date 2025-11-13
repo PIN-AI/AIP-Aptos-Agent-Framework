@@ -1,0 +1,187 @@
+# ==================== Move Build Artifacts ====================
+# Aptos Move compilation outputs
+build/
+.aptos/
+.movement/
+
+# Move prover artifacts
+*.bpl
+*.boogie
+*.smt2
+
+# ==================== IDE & Editor ====================
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ==================== Operating System ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==================== Language Specific ====================
+# Node.js (if frontend exists)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+package-lock.json
+yarn.lock
+.pnpm-debug.log*
+
+# Python (if scripts exist)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+*.egg-info/
+dist/
+*.egg
+
+# Rust (if Rust tools exist)
+target/
+Cargo.lock
+**/*.rs.bk
+
+# ==================== Logs & Databases ====================
+*.log
+*.sql
+*.sqlite
+*.db
+
+# ==================== Temporary Files ====================
+*.tmp
+*.temp
+*.bak
+*.cache
+.cache/
+
+# ==================== Test Coverage & Reports ====================
+coverage/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# ==================== Environment Variables ====================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ==================== Aptos Specific ====================
+# Aptos CLI profiles (may contain private keys)
+.aptos/config.yaml
+
+# Account keys (NEVER commit these!)
+*.key.json
+*_key.json
+private_key.txt
+account.json
+
+# Deployment artifacts
+deployed_addresses.json
+deployment_config.json
+
+# ==================== Project Specific ====================
+# Documentation build outputs
+docs/_build/
+docs/.buildinfo
+
+# Test artifacts
+test-results/
+.test-cache/
+
+# Benchmark results
+benchmarks/results/
+
+# Temporary development files
+TODO.md.backup
+NOTES.md
+scratch/
+tmp/
+
+# ==================== Archives ====================
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.dmg
+*.iso
+
+# ==================== Security ====================
+# Never commit these!
+secrets/
+.secrets/
+credentials/
+*.pem
+*.crt
+*.csr
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+
