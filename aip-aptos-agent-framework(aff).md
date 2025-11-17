@@ -1,7 +1,7 @@
 ---
 aip: unconfirmed
 title: Aptos Agent Framework
-author: PIN-AI Team
+author: Pis Long (pis@pinai.io)
 discussions-to:
 Status: Draft
 last-call-end-date:
